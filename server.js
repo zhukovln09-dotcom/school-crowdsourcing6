@@ -1,18 +1,56 @@
-// server.js - версия для MongoDB
+// server.js - версия с ролями
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const db = require('./database-mongo.js'); // Изменили импорт!
+const cookieParser = require('cookie-parser');
+const db = require('./database-mongo.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: true,
+    credentials: true
+}));
 app.use(express.json());
-
-// Статические файлы
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Генерация токена сессии
+const generateSessionToken = () => {
+    return 'session_' + Math.random().toString(36).substr(2) + Date.now().toString(36);
+};
+
+// Middleware для аутентификации
+app.use(async (req, res, next) => {
+    try {
+        let sessionToken = req.cookies.session_token;
+        
+        if (!sessionToken) {
+            sessionToken = generateSessionToken();
+            res.cookie('session_token', sessionToken, { 
+                httpOnly: true, 
+                maxAge: 30 * 24 * 60 * 60 * 1000, // 30 дней
+                sameSite: 'lax'
+            });
+        }
+        
+        const user = await db.createOrGetUser(
+            sessionToken,
+            req.ip,
+            req.headers['user-agent']
+        );
+        
+        req.user = user;
+        req.sessionToken = sessionToken;
+        next();
+    } catch (error) {
+        console.error('Ошибка аутентификации:', error);
+        req.user = { role: 'guest' };
+        next();
+    }
+});
 
 // Главная страница
 app.get('/', (req, res) => {
@@ -45,6 +83,59 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
+// ========== АВТОРИЗАЦИЯ ==========
+
+// Получить текущего пользователя
+app.get('/api/auth/me', async (req, res) => {
+    try {
+        const user = await db.getUserByToken(req.sessionToken);
+        res.json({
+            role: user.role,
+            username: user.username
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Войти по коду
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { code } = req.body;
+        
+        if (!code) {
+            return res.status(400).json({ error: 'Введите код' });
+        }
+        
+        const result = await db.authenticateWithCode(code, req.sessionToken);
+        
+        if (result.success) {
+            res.json({
+                success: true,
+                user: result.user
+            });
+        } else {
+            res.status(401).json({ error: result.message });
+        }
+        
+    } catch (error) {
+        console.error('Ошибка входа:', error);
+        res.status(500).json({ error: 'Ошибка сервера' });
+    }
+});
+
+// Выйти
+app.post('/api/auth/logout', async (req, res) => {
+    try {
+        await db.logout(req.sessionToken);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========== ОБЩИЕ API ==========
+
 // Получить статистику
 app.get('/api/stats', async (req, res) => {
     try {
@@ -55,12 +146,10 @@ app.get('/api/stats', async (req, res) => {
     }
 });
 
-// API Routes
-
-// Получить все идеи
+// Получить все идеи (с учетом роли)
 app.get('/api/ideas', async (req, res) => {
     try {
-        const ideas = await db.getAllIdeas();
+        const ideas = await db.getAllIdeas(req.user.role);
         res.json(ideas);
     } catch (error) {
         console.error('Ошибка загрузки идей:', error);
@@ -73,7 +162,6 @@ app.post('/api/ideas', async (req, res) => {
     try {
         const { title, description, author } = req.body;
         
-        // Валидация
         if (!title || !description) {
             return res.status(400).json({ 
                 error: 'Заполните все поля',
@@ -95,18 +183,22 @@ app.post('/api/ideas', async (req, res) => {
             });
         }
         
-        const result = await db.addIdea(title, description, author);
+        const result = await db.addIdea(
+            title, 
+            description, 
+            author || 'Аноним',
+            req.user._id
+        );
         
         res.json({ 
             success: true, 
-            message: 'Идея успешно добавлена!',
+            message: 'Идея успешно добавлена и отправлена на рассмотрение!',
             id: result.id
         });
         
     } catch (error) {
         console.error('Ошибка добавления идеи:', error);
         
-        // Более понятные ошибки для пользователя
         if (error.message.includes('обязательно') || 
             error.message.includes('должно быть')) {
             res.status(400).json({ error: error.message });
@@ -126,7 +218,7 @@ app.post('/api/ideas/:id/vote', async (req, res) => {
             return res.status(400).json({ error: 'Не указан ID идеи' });
         }
         
-        await db.voteForIdea(ideaId, userIp);
+        await db.voteForIdea(ideaId, userIp, req.user._id);
         
         res.json({ 
             success: true,
@@ -164,7 +256,12 @@ app.post('/api/ideas/:id/comments', async (req, res) => {
             });
         }
         
-        const result = await db.addComment(ideaId, author, text);
+        const result = await db.addComment(
+            ideaId, 
+            author || 'Аноним', 
+            text,
+            req.user._id
+        );
         
         res.json({ 
             success: true,
@@ -197,16 +294,103 @@ app.get('/api/ideas/:id/comments', async (req, res) => {
     }
 });
 
-// Очистить базу данных (ТОЛЬКО ДЛЯ ТЕСТИРОВАНИЯ!)
-app.delete('/api/admin/clear', async (req, res) => {
-    // Защита: только в режиме разработки
-    if (process.env.NODE_ENV !== 'development') {
-        return res.status(403).json({ error: 'Доступ запрещен' });
+// ========== API МОДЕРАТОРА ==========
+
+// Middleware проверки роли модератора
+const requireModerator = async (req, res, next) => {
+    if (req.user.role !== 'moderator' && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Доступ запрещен. Требуется роль модератора.' });
     }
-    
+    next();
+};
+
+// Middleware проверки роли контент-менеджера
+const requireContentManager = async (req, res, next) => {
+    if (req.user.role !== 'content_manager' && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Доступ запрещен. Требуется роль контент-менеджера.' });
+    }
+    next();
+};
+
+// Получить все комментарии (для модератора)
+app.get('/api/moderator/comments', requireModerator, async (req, res) => {
     try {
-        const result = await db.clearDatabase();
-        res.json(result);
+        const comments = await db.getAllComments();
+        res.json(comments);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Удалить идею
+app.delete('/api/moderator/ideas/:id', requireModerator, async (req, res) => {
+    try {
+        const ideaId = req.params.id;
+        await db.deleteIdea(ideaId, req.user._id);
+        res.json({ success: true, message: 'Идея удалена' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Удалить комментарий
+app.delete('/api/moderator/comments/:id', requireModerator, async (req, res) => {
+    try {
+        const commentId = req.params.id;
+        await db.deleteComment(commentId, req.user._id);
+        res.json({ success: true, message: 'Комментарий удален' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========== API КОНТЕНТ-МЕНЕДЖЕРА ==========
+
+// Получить идеи на рассмотрении
+app.get('/api/content/ideas/pending', requireContentManager, async (req, res) => {
+    try {
+        const ideas = await db.getPendingIdeas();
+        res.json(ideas);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Изменить статус идеи
+app.put('/api/content/ideas/:id/status', requireContentManager, async (req, res) => {
+    try {
+        const ideaId = req.params.id;
+        const { status, notes } = req.body;
+        
+        if (!['approved', 'rejected', 'in_progress', 'completed'].includes(status)) {
+            return res.status(400).json({ error: 'Недопустимый статус' });
+        }
+        
+        await db.updateIdeaStatus(ideaId, status, notes, req.user._id);
+        
+        res.json({ 
+            success: true, 
+            message: `Статус идеи изменен на "${status}"`
+        });
+        
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Сделать идею избранной/убрать из избранного
+app.put('/api/content/ideas/:id/featured', requireContentManager, async (req, res) => {
+    try {
+        const ideaId = req.params.id;
+        const { featured } = req.body;
+        
+        await db.toggleFeatured(ideaId, featured, req.user._id);
+        
+        res.json({ 
+            success: true, 
+            message: featured ? 'Идея добавлена в избранное' : 'Идея убрана из избранного'
+        });
+        
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -231,4 +415,8 @@ app.listen(PORT, () => {
     console.log(`🚀 Сервер запущен на порту ${PORT}`);
     console.log(`🌐 Сайт: http://localhost:${PORT}`);
     console.log(`📊 MongoDB: ${process.env.MONGODB_URI ? 'Настроен' : 'Используется локальная строка'}`);
+    console.log(`🔐 Коды доступа:`);
+    console.log(`   Модератор: MOD2024`);
+    console.log(`   Контент-менеджер: CONTENT2024`);
+    console.log(`   Админ: ADMIN2024`);
 });
