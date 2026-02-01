@@ -1,0 +1,132 @@
+/* Добавьте эти стили в конец файла style.css */
+
+/* ========== СТИЛИ ДЛЯ СИСТЕМЫ РОЛЕЙ ========== */
+
+/* Кнопки для ролей */
+.moderator-btn {
+    background: #f44336;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.moderator-btn:hover {
+    background: #d32f2f;
+}
+
+.content-btn {
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.content-btn:hover {
+    background: #388E3C;
+}
+
+.content-btn.featured-btn {
+    background: #FFC107;
+    color: #333;
+}
+
+.content-btn.featured-btn:hover {
+    background: #FFA000;
+}
+
+/* Бейджи */
+.badge-featured {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeaa7;
+}
+
+/* Панели управления */
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+    background: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.btn-small:hover {
+    background: #5a6268;
+}
+
+/* Модальные окна */
+.modal-panel {
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+/* Статусы */
+.status-pending {
+    color: #ff9800;
+    font-weight: bold;
+}
+
+.status-approved {
+    color: #4CAF50;
+    font-weight: bold;
+}
+
+.status-rejected {
+    color: #f44336;
+    font-weight: bold;
+}
+
+.status-featured {
+    color: #FFC107;
+    font-weight: bold;
+}
+
+/* Информация о проверке */
+.review-info {
+    font-size: 12px;
+    color: #666;
+    margin-top: 5px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    .idea-footer > div {
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+    
+    .moderator-btn,
+    .content-btn {
+        padding: 4px 8px;
+        font-size: 11px;
+        margin-left: 3px;
+    }
+    
+    #authControls {
+        position: static;
+        margin-top: 15px;
+        justify-content: center;
+    }
+}
